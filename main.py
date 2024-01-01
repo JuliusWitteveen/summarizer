@@ -16,9 +16,7 @@ custom_prompt_area = None
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Set default prompt in English
-default_prompt_en = """
-Summarize the text concisely and directly without prefatory phrases. Focus on presenting its key points and main ideas, ensuring that essential details are accurately conveyed in a straightforward manner.
-"""
+default_prompt_en = """Summarize the text concisely and directly without prefatory phrases. Focus on presenting its key points and main ideas, ensuring that essential details are accurately conveyed in a straightforward manner."""
 
 # -------------------------------------------------------------------
 # Helper Functions
@@ -65,19 +63,37 @@ def start_summarization(root):
     global selected_file_path, custom_prompt_area
     api_key = get_api_key()
     if api_key and selected_file_path:
-        custom_prompt_text = get_summary_prompt(selected_file_path, api_key)
-        text = file_handler.load_document(selected_file_path)
-        print(f"Loaded text: {text[:500]}")  # Print first 500 characters of the loaded text
-        
-        # Generate summary and handle GUI updates in a thread-safe manner
-        summary = summarization.generate_summary(text, api_key, custom_prompt_text)
-        
-        if summary:
-            # Save the summary file and update the GUI
-            filename_without_ext = os.path.splitext(os.path.basename(selected_file_path))[0]
-            root.after(0, lambda: save_summary_file(summary, filename_without_ext))
-        # Finalize process and update the progress bar
-        root.after(0, lambda: finalize_process(root))
+        try:
+            # Retrieve the custom prompt text based on the document's language
+            custom_prompt_text = get_summary_prompt(selected_file_path, api_key)
+            update_progress_bar(10, root)  # Update progress after getting prompt
+
+            # Load the document
+            text = file_handler.load_document(selected_file_path)
+            update_progress_bar(20, root)  # Update progress after loading document
+
+            # Generate the summary
+            summary = summarization.generate_summary(
+                text, 
+                api_key, 
+                custom_prompt_text,
+                progress_update_callback=lambda value: update_progress_bar(value, root)
+            )
+
+            # Handle the summary (e.g., display, save)
+            if summary:
+                filename_without_ext = os.path.splitext(os.path.basename(selected_file_path))[0]
+                root.after(0, lambda: save_summary_file(summary, filename_without_ext))
+                update_progress_bar(100, root)  # Update progress to 100% after completion
+
+        except Exception as e:
+            logging.error(f"Error in summarization process: {e}")
+            messagebox.showerror("Summarization Error", f"An error occurred during summarization: {e}")
+            update_progress_bar(0, root)  # Reset progress bar in case of error
+    else:
+        messagebox.showinfo("API Key Missing", "API key is missing or invalid.")
+        update_progress_bar(0, root)  # Reset progress bar if API key is missing
+
 
 def update_progress_bar(value, root):
     def set_progress(value):
