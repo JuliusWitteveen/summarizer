@@ -9,10 +9,31 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.pagesizes import letter
 
 def is_valid_file_path(path):
-    pattern = r'^[a-zA-Z0-9_\\-\\\\/:. ]+$'
+    """
+    Validates the given file path.
+
+    Args:
+        path (str): The file path to validate.
+
+    Returns:
+        bool: True if the path is valid and the file exists, False otherwise.
+    """
+    pattern = r'^[a-zA-Z0-9_\\-\\/:. ]+$'
     return re.match(pattern, path) and os.path.isfile(path)
 
 def load_document(file_path):
+    """
+    Loads a document from the given file path.
+
+    Args:
+        file_path (str): The path of the file to load.
+
+    Returns:
+        str: The text content of the document.
+
+    Raises:
+        ValueError: If the file path is invalid or the file extension is unsupported.
+    """
     if not is_valid_file_path(file_path):
         raise ValueError(f"Invalid file path: {file_path}")
     
@@ -38,6 +59,16 @@ def load_document(file_path):
     return text
 
 def save_summary(summary, file_path):
+    """
+    Saves the summary to a file.
+
+    Args:
+        summary (str): The summary text to save.
+        file_path (str): The path where the summary should be saved.
+
+    Raises:
+        RuntimeError: If an error occurs during file saving.
+    """
     try:
         if file_path.endswith('.txt'):
             with open(file_path, 'w', encoding='utf-8') as file:
