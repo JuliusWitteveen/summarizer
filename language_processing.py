@@ -2,6 +2,9 @@ from langdetect import detect
 from translate import Translator
 import logging
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 def detect_language(text):
     """
     Detects the language of the given text.
@@ -16,7 +19,9 @@ def detect_language(text):
         Uses the 'langdetect' library for language detection.
     """
     try:
-        return detect(text)
+        language = detect(text)
+        logging.info(f"Detected language: {language}")
+        return language
     except Exception as e:
         logging.error(f"Error in language detection: {e}")
         return "unknown"
@@ -37,12 +42,14 @@ def translate_prompt(prompt_text, target_language):
         Logs a message if the target language is not supported.
     """
     if target_language not in ["nl", "en"]:
-        logging.info(f"Translation not supported for language: {target_language}")
+        logging.warning(f"Translation not supported for language: {target_language}")
         return prompt_text
 
     translator = Translator(to_lang=target_language)
     try:
-        return translator.translate(prompt_text)
+        translated_text = translator.translate(prompt_text)
+        logging.info(f"Translated text to {target_language}: {translated_text}")
+        return translated_text
     except Exception as e:
-        logging.error(f"Error in translating text: {e}")
+        logging.error(f"Error in translating text to {target_language}: {e}")
         return prompt_text
