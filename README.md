@@ -1,31 +1,42 @@
+Based on the provided information and previous analysis, here's an enhanced `README.md` for the "Summarizer" project:
+
+---
+
 # Summarizer
 
 ## Overview
-The Summarizer is a Python-based tool designed to automate the process of summarizing text. This project leverages natural language processing techniques to extract key information from texts, providing concise and relevant summaries.
+The Summarizer is an advanced tool designed to automate the summarization of documents. It efficiently processes PDF, DOCX, RTF, and TXT files using cutting-edge Natural Language Processing (NLP) and machine learning techniques. The project is structured modularly, emphasizing efficiency and responsiveness through multithreaded and asynchronous programming.
 
-## Features
-- **Text Summarization**: Simplifies lengthy text documents into shorter, concise summaries without losing the core information.
-- **File Handling**: Efficient handling of text files for summarization.
-- **Language Processing**: Advanced language processing capabilities to understand and process the text.
+## Key Features
+- **Multiple File Formats**: Supports PDF, DOCX, RTF, and TXT files.
+- **Advanced Text Processing**: Utilizes NLP and machine learning for accurate summarization.
+- **Language Detection and Translation**: Automatically detects and translates prompts based on the document's language.
+- **Efficient Summarization**: Employs clustering and OpenAI's GPT-3.5 model for generating concise summaries.
+- **User-Friendly GUI**: Features a Tkinter-based interface for ease of use.
+- **Progress Tracking**: Visual progress indication during the summarization process.
 
-## How to Use
-1. **Setup**: Clone the repository and install any required dependencies.
-2. **Running the Application**: Execute `main.py` to start the summarization process.
-3. **Input**: Provide the text file you wish to summarize.
-4. **Output**: Receive a summarized version of the text.
+## Dependencies and Compatibility
+- Python 3.8 or above.
+- Libraries: `fitz` (PyMuPDF), `docx`, `striprtf`, `langchain`, `sklearn`, `numpy`, `langdetect`, `kneed`, `threading`, `tkinter`, `translate`.
 
-## Files in the Repository
-- `file_handler.py`: Manages the reading and writing of text files.
-- `language_processing.py`: Handles the processing of natural language in the text.
-- `main.py`: The main script that initiates the summarization process.
-- `summarization.py`: Contains the core algorithm for summarizing the text.
+## Installation
+1. Ensure Python 3.8 or above is installed on your system.
+2. Clone the repository: `git clone https://github.com/juliuswitteveen/Summarizer.git`
+3. Navigate to the project directory: `cd Summarizer`
+4. Install required libraries: `pip install -r requirements.txt`
 
-## Requirements
-- Python 3.x
-- Additional Python libraries (list any specific libraries and versions required)
+## Usage
+1. Start the application: `python main.py`
+2. Use the GUI to select a document for summarization.
+3. Optionally, customize the summarization prompt.
+4. Initiate the summarization process.
+5. Save the generated summary in your preferred format.
+
+## Workflow
+- **Initialization**: Sets up global variables, logging, and pre-loads modules.
+- **GUI**: Facilitates file selection, custom prompt input, and summarization initiation.
+- **Summarization**: Involves document loading, language detection, text preprocessing, clustering, and summary generation.
+- **Output**: Displays and allows saving of the final summary.
 
 ## Contributing
 Contributions to the Summarizer project are welcome. Please read the contributing guidelines before making a pull request.
-
-## License
-Specify the license under which this project is released.
