@@ -1,7 +1,3 @@
-Based on the provided information and previous analysis, here's an enhanced `README.md` for the "Summarizer" project:
-
----
-
 # Summarizer
 
 ## Overview
