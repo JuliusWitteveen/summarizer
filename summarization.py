@@ -1,183 +1,100 @@
-import file_handler
-import language_processing
-import summarization
 import logging
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-import threading
-import os
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import OpenAIEmbeddings
+from sklearn.cluster import KMeans
+import numpy as np
+from kneed import KneeLocator
+from langchain.chains.summarize import load_summarize_chain
+from langchain.prompts import PromptTemplate
+from langchain.chat_models import ChatOpenAI
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Global variables
-selected_file_path = None
-progress = None
-custom_prompt_area = None
-
-# Set default prompt in English
-default_prompt_en = """Summarize the text concisely and directly without prefatory phrases. Focus on presenting its key points and main ideas, ensuring that essential details are accurately conveyed in a straightforward manner."""
-
-# Helper Functions
-
-def get_api_key(file_path=r'C:\\api_key.txt'):
-    """
-    Retrieves the API key from a specified file. Notifies the user and logs if the file is not found or an error occurs.
-
-    Args:
-        file_path (str): The path to the API key file.
-
-    Returns:
-        str: The API key, or None if the file is not found or an error occurs.
-    """
-    logging.info("Retrieving API key.")
+def split_and_embed_text(text, openai_api_key):
     try:
-        with open(file_path, 'r') as file:
-            return file.read().strip()
-    except FileNotFoundError:
-        error_message = f"API key file not found at {file_path}"
-        logging.error(error_message)
-        messagebox.showerror("API Key Error", error_message)
-        return None
-    except IOError as e:
-        error_message = f"Error reading the API key file: {e}"
-        logging.error(error_message)
-        messagebox.showerror("API Key Error", error_message)
-        return None
+        text_splitter = RecursiveCharacterTextSplitter(separators=["\n\n", "\n", "\t"], chunk_size=10000, chunk_overlap=3000)
+        docs = text_splitter.create_documents([text])
+        embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
+        vectors = embeddings.embed_documents([x.page_content for x in docs])
+        return docs, vectors
+    except Exception as e:
+        logging.error(f"Error during text splitting and embedding: {e}")
+        raise
 
-def select_file():
-    """
-    Opens a file dialog for the user to select a document. Logs the file selection process.
+def determine_optimal_clusters(vectors, max_clusters=100):
+    try:
+        num_samples = len(vectors)
+        if num_samples == 0:
+            raise ValueError("No data points available for clustering.")
 
-    Returns:
-        str: The file path of the selected document.
-    """
-    logging.info("Opening file dialog for document selection.")
-    file_path = filedialog.askopenfilename(
-        title="Select a Document",
-        filetypes=[("PDF Files", "*.pdf"), ("Word Documents", "*.docx"), ("RTF Files", "*.rtf"), ("Text Files", "*.txt")])
-    if file_path:
-        logging.info(f"File selected: {file_path}")
-    else:
-        logging.info("File selection cancelled.")
-    return file_path
+        max_clusters = min(num_samples, max_clusters)
+        sse = []
+        for k in range(1, max_clusters + 1):
+            kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+            kmeans.fit(vectors)
+            sse.append(kmeans.inertia_)
 
-def get_summary_prompt(file_path, api_key):
-    """
-    Generates a summary prompt based on the document's language. Defaults to English if language detection fails.
+        elbow_point = KneeLocator(range(1, len(sse) + 1), sse, curve='convex', direction='decreasing').elbow
+        return elbow_point or 1
+    except Exception as e:
+        logging.error(f"Error determining optimal clusters: {e}")
+        raise
 
-    Args:
-        file_path (str): The path of the document.
-        api_key (str): The API key for language processing services.
+def cluster_embeddings(vectors, num_clusters):
+    try:
+        kmeans = KMeans(n_clusters=num_clusters, random_state=42, n_init=10).fit(vectors)
+        closest_indices = [np.argmin(np.linalg.norm(vectors - center, axis=1)) for center in kmeans.cluster_centers_]
+        return sorted(closest_indices)
+    except Exception as e:
+        logging.error(f"Error during clustering embeddings: {e}")
+        raise
 
-    Returns:
-        str: A custom prompt for summarization based on the document's language.
-    """
-    logging.info(f"Generating summary prompt for file: {file_path}")
-    text = file_handler.load_document(file_path)
-    if not text:
-        logging.warning("No text found in the document.")
-        return None
+def process_chunk(doc, llm3_turbo, map_prompt_template):
+    try:
+        return load_summarize_chain(llm=llm3_turbo, chain_type="stuff", prompt=map_prompt_template).run([doc])
+    except Exception as e:
+        logging.error(f"Error summarizing document chunk: {e}")
+        return ""
 
-    language = language_processing.detect_language(text)
-    if language == "nl":
-        return language_processing.translate_prompt(default_prompt_en, language)
-    else:
-        return default_prompt_en
+def generate_chunk_summaries(docs, selected_indices, openai_api_key, custom_prompt, max_workers=10):
+    try:
+        llm3_turbo = ChatOpenAI(temperature=0, openai_api_key=openai_api_key, max_tokens=4096, model='gpt-3.5-turbo-16k')
+        map_prompt_template = PromptTemplate(template=f"```{{text}}```\n{custom_prompt}", input_variables=["text"])
+        summary_list = []
 
-# Background Summarization Function
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_doc = {executor.submit(process_chunk, docs[i], llm3_turbo, map_prompt_template): i for i in selected_indices}
+            for future in as_completed(future_to_doc):
+                index = future_to_doc[future]
+                try:
+                    chunk_summary = future.result()
+                    summary_list.append(chunk_summary + "\n" if index < len(selected_indices) - 1 else chunk_summary)
+                except Exception as e:
+                    logging.error(f"Error summarizing document chunk at index {index}: {e}")
 
-def start_summarization_thread(root):
-    """
-    Starts the summarization process in a separate thread.
+        return "".join(summary_list)
+    except Exception as e:
+        logging.error(f"Error in generating chunk summaries: {e}")
+        raise
 
-    Args:
-        root: The root window of the Tkinter application.
-    """
-    logging.info("Starting summarization in a new thread.")
-    summarization_thread = threading.Thread(target=start_summarization, args=(root,))
-    summarization_thread.start()
+def generate_summary(text, api_key, custom_prompt, progress_update_callback=None):
+    try:
+        docs, vectors = split_and_embed_text(text, api_key)
+        if progress_update_callback:
+            progress_update_callback(40)
 
-def start_summarization(root):
-    """
-    Handles the summarization process. Updates the progress bar and provides user feedback.
+        num_clusters = determine_optimal_clusters(vectors)
+        if progress_update_callback:
+            progress_update_callback(50)
 
-    Args:
-        root: The root window of the Tkinter application.
-    """
-    global selected_file_path, custom_prompt_area
-    api_key = get_api_key()
-    if api_key and selected_file_path:
-        try:
-            logging.info("Starting summarization process.")
-            custom_prompt_text = get_summary_prompt(selected_file_path, api_key)
-            update_progress_bar(10, root)
+        summaries = generate_chunk_summaries(docs, range(len(docs)), api_key, custom_prompt)
+        final_summary = "\n".join(summaries)
+        if progress_update_callback:
+            progress_update_callback(90)
 
-            text = file_handler.load_document(selected_file_path)
-            update_progress_bar(20, root)
-
-            summary = summarization.generate_summary(
-                text, 
-                api_key, 
-                custom_prompt_text,
-                progress_update_callback=lambda value: update_progress_bar(value, root)
-            )
-
-            if summary:
-                filename_without_ext = os.path.splitext(os.path.basename(selected_file_path))[0]
-                root.after(0, lambda: save_summary_file(summary, filename_without_ext))
-                update_progress_bar(100, root)
-                logging.info("Summarization completed successfully.")
-            else:
-                logging.warning("Summarization resulted in no content.")
-                messagebox.showinfo("Summarization", "The summarization process did not generate any content.")
-
-        except Exception as e:
-            error_message = f"Error in summarization process: {e}"
-            logging.error(error_message)
-            messagebox.showerror("Summarization Error", error_message)
-            update_progress_bar(0, root)
-    else:
-        if not api_key:
-            logging.warning("API key is missing or invalid.")
-            messagebox.showinfo("API Key Missing", "API key is missing or invalid.")
-        if not selected_file_path:
-            logging.warning("No file selected for summarization.")
-            messagebox.showinfo("File Selection", "No file selected for summarization.")
-        update_progress_bar(0, root)
-
-def update_progress_bar(value, root):
-    """
-    Updates the progress bar in the GUI.
-
-    Args:
-        value (int): The progress value to set.
-        root: The root window of the Tkinter application.
-    """
-    logging.debug(f"Updating progress bar to {value}%.")
-    def set_progress(value):
-        progress['value'] = value
-    root.after(0, lambda: set_progress(value))
-
-def save_summary_file(summary, filename_without_ext):
-    """
-    Opens a save file dialog and saves the summary to a file. Provides user feedback.
-
-    Args:
-        summary (str): The summary text to save.
-        filename_without_ext (str): The base filename for the summary file.
-    """
-    logging.info("Opening save file dialog for summary.")
-    default_summary_filename = f"{filename_without_ext}_sum"
-    file_path = filedialog.asksaveasfilename(
-        initialfile=default_summary_filename,
-        filetypes=[("Text Files", "*.txt"), ("Word Documents", "*.docx"), ("PDF Files", "*.pdf")],
-        defaultextension=".txt"
-    )
-    if file_path:
-        file_handler.save_summary(summary, file_path)
-        messagebox.showinfo("Success", f"Summary saved successfully to {file_path}")
-        logging.info(f"Summary saved to {file_path}")
-    else:
-        logging.warning("Summary saving cancelled by user.")
-        messagebox.showerror("Error", "No file path selected for saving the summary.")
+        return final_summary
+    except Exception as e:
+        logging.error(f"Error in the summarization process: {e}")
+        raise
