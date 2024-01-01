@@ -161,6 +161,7 @@ def save_summary_file(summary, filename_without_ext):
 # -------------------------------------------------------------------
 # GUI Code Block
 # -------------------------------------------------------------------
+
 def main_gui():
     """
     Initializes and runs the main GUI for the Document Summarizer application.
@@ -205,14 +206,8 @@ def main_gui():
 
     # Function for file selection
     def file_select():
-        """
-        Opens a file dialog for the user to select a document and sets up the summarization environment based on the selected file.
-        """
         global selected_file_path
-        selected_file_path = filedialog.askopenfilename(
-            title="Select a Document",
-            filetypes=[("PDF Files", "*.pdf"), ("Word Documents", "*.docx"), ("RTF Files", "*.rtf"), ("Text Files", "*.txt")])
-        
+        selected_file_path = select_file()
         if selected_file_path:
             api_key = get_api_key()
             if api_key:
@@ -236,7 +231,6 @@ def main_gui():
                     messagebox.showerror("Error", f"Failed to load document: {e}")
                     summarize_button['state'] = 'disabled'
             else:
-                messagebox.showinfo("API Key Error", "API key not found. Please check the file path.")
                 summarize_button['state'] = 'disabled'
         else:
             summarize_button['state'] = 'disabled'
