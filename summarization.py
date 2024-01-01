@@ -21,13 +21,19 @@ def split_and_embed_text(text, openai_api_key):
         raise
 
 def determine_optimal_clusters(vectors, max_clusters=100):
+    num_samples = len(vectors)
+    if num_samples == 0:
+        raise ValueError("No data points available for clustering.")
+    
+    max_clusters = min(num_samples, max_clusters)
     sse = []
     for k in range(1, max_clusters + 1):
         kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
         kmeans.fit(vectors)
         sse.append(kmeans.inertia_)
+    
     elbow_point = KneeLocator(range(1, len(sse) + 1), sse, curve='convex', direction='decreasing').elbow
-    return elbow_point or 20
+    return elbow_point or 1
 
 def cluster_embeddings(vectors, num_clusters):
     try:
@@ -38,16 +44,20 @@ def cluster_embeddings(vectors, num_clusters):
         logging.error(f"Error during clustering embeddings: {e}")
         raise
 
+def process_chunk(doc, llm3_turbo, map_prompt_template):
+    try:
+        return load_summarize_chain(llm=llm3_turbo, chain_type="stuff", prompt=map_prompt_template).run([doc])
+    except Exception as e:
+        logging.error(f"Error summarizing document chunk: {e}")
+        return ""
+
 def generate_chunk_summaries(docs, selected_indices, openai_api_key, custom_prompt, max_workers=10):
     llm3_turbo = ChatOpenAI(temperature=0, openai_api_key=openai_api_key, max_tokens=4096, model='gpt-3.5-turbo-16k')
     map_prompt_template = PromptTemplate(template=f"```{{text}}```\n{custom_prompt}", input_variables=["text"])
     summary_list = []
 
-    def process_chunk(doc):
-        return load_summarize_chain(llm=llm3_turbo, chain_type="stuff", prompt=map_prompt_template).run([doc])
-
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_doc = {executor.submit(process_chunk, docs[i]): i for i in selected_indices}
+        future_to_doc = {executor.submit(process_chunk, docs[i], llm3_turbo, map_prompt_template): i for i in selected_indices}
         for future in as_completed(future_to_doc):
             index = future_to_doc[future]
             try:
@@ -58,20 +68,31 @@ def generate_chunk_summaries(docs, selected_indices, openai_api_key, custom_prom
 
     return "".join(summary_list)
 
-def generate_summary(text, openai_api_key, custom_prompt):
-    docs, vectors = split_and_embed_text(text, openai_api_key)
-    num_chunks = len(docs)
-    print(f"Number of chunks: {num_chunks}")  # Debugging
+def compile_summaries(summaries):
+    final_summary = "\n".join(summaries)
+    return final_summary
 
-    num_clusters = min(num_chunks, 20)  # Adjust '20' as needed
-    print(f"Number of clusters: {num_clusters}")  # Debugging
+def generate_summary(text, api_key, custom_prompt, progress_update_callback=None):
+    docs, vectors = split_and_embed_text(text, api_key)
+    if progress_update_callback:
+        progress_update_callback(40)
 
-    if num_chunks > 1:
-        selected_indices = cluster_embeddings(vectors, num_clusters)
-        print(f"Selected indices for summarization: {selected_indices}")  # Debugging
-        final_summary = generate_chunk_summaries(docs, selected_indices, openai_api_key, custom_prompt)
-    else:
-        final_summary = text if num_chunks == 1 else "Insufficient text for summarization."
+    num_clusters = determine_optimal_clusters(vectors)
+    if progress_update_callback:
+        progress_update_callback(50)
 
-    print(f"Final summary: {final_summary[:500]}")  # Debugging: print first 500 characters
+    llm3_turbo = ChatOpenAI(temperature=0, openai_api_key=api_key, max_tokens=4096, model='gpt-3.5-turbo-16k')
+    map_prompt_template = PromptTemplate(template=f"```{{text}}```\n{custom_prompt}", input_variables=["text"])
+
+    summaries = []
+    for i, doc in enumerate(docs):
+        summary = process_chunk(doc, llm3_turbo, map_prompt_template)
+        summaries.append(summary)
+        if progress_update_callback:
+            progress_update_callback(50 + (40 * (i + 1) // len(docs)))
+
+    final_summary = compile_summaries(summaries)
+    if progress_update_callback:
+        progress_update_callback(90)
+
     return final_summary
