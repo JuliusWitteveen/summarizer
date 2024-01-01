@@ -1,173 +1,273 @@
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import OpenAIEmbeddings
-from sklearn.cluster import KMeans
-import numpy as np
-from kneed import KneeLocator
-from langchain.chains.summarize import load_summarize_chain
-from langchain.prompts import PromptTemplate
-from langchain.chat_models import ChatOpenAI
+import file_handler
+import language_processing
+import summarization
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+import threading
+import os
 
-def split_and_embed_text(text, openai_api_key):
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Global variables
+selected_file_path = None
+progress = None
+custom_prompt_area = None
+
+# Set default prompt in English
+default_prompt_en = """Summarize the text concisely and directly without prefatory phrases. Focus on presenting its key points and main ideas, ensuring that essential details are accurately conveyed in a straightforward manner."""
+
+# Helper Functions
+
+def get_api_key(file_path=r'C:\\api_key.txt'):
     """
-    Splits the text into manageable chunks and generates embeddings for each chunk.
+    Retrieves the API key from a specified file. Notifies the user and logs if the file is not found or an error occurs.
 
     Args:
-        text (str): The text to be split and embedded.
-        openai_api_key (str): The API key for OpenAI services.
+        file_path (str): The path to the API key file.
 
     Returns:
-        tuple: A tuple containing the list of document chunks and their corresponding embeddings.
+        str: The API key, or None if the file is not found or an error occurs.
     """
+    logging.info("Retrieving API key.")
     try:
-        text_splitter = RecursiveCharacterTextSplitter(separators=["\n\n", "\n", "\t"], chunk_size=10000, chunk_overlap=3000)
-        docs = text_splitter.create_documents([text])
-        embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
-        vectors = embeddings.embed_documents([x.page_content for x in docs])
-        return docs, vectors
-    except Exception as e:
-        logging.error(f"Error during text splitting and embedding: {e}")
-        raise
+        with open(file_path, 'r') as file:
+            return file.read().strip()
+    except FileNotFoundError:
+        error_message = f"API key file not found at {file_path}"
+        logging.error(error_message)
+        messagebox.showerror("API Key Error", error_message)
+        return None
+    except IOError as e:
+        error_message = f"Error reading the API key file: {e}"
+        logging.error(error_message)
+        messagebox.showerror("API Key Error", error_message)
+        return None
 
-def determine_optimal_clusters(vectors, max_clusters=100):
+def select_file():
     """
-    Determines the optimal number of clusters for KMeans clustering based on the elbow method.
-
-    Args:
-        vectors (list): The list of embeddings.
-        max_clusters (int): The maximum number of clusters to consider.
+    Opens a file dialog for the user to select a document. Logs the file selection process.
 
     Returns:
-        int: The optimal number of clusters.
+        str: The file path of the selected document.
     """
-    num_samples = len(vectors)
-    if num_samples == 0:
-        raise ValueError("No data points available for clustering.")
-    
-    max_clusters = min(num_samples, max_clusters)
-    sse = []
-    for k in range(1, max_clusters + 1):
-        kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-        kmeans.fit(vectors)
-        sse.append(kmeans.inertia_)
-    
-    elbow_point = KneeLocator(range(1, len(sse) + 1), sse, curve='convex', direction='decreasing').elbow
-    return elbow_point or 1
+    logging.info("Opening file dialog for document selection.")
+    file_path = filedialog.askopenfilename(
+        title="Select a Document",
+        filetypes=[("PDF Files", "*.pdf"), ("Word Documents", "*.docx"), ("RTF Files", "*.rtf"), ("Text Files", "*.txt")])
+    if file_path:
+        logging.info(f"File selected: {file_path}")
+    else:
+        logging.info("File selection cancelled.")
+    return file_path
 
-def cluster_embeddings(vectors, num_clusters):
+def get_summary_prompt(file_path, api_key):
     """
-    Clusters the embeddings and identifies the closest document chunk to each cluster center.
+    Generates a summary prompt based on the document's language. Defaults to English if language detection fails.
 
     Args:
-        vectors (list): The list of embeddings.
-        num_clusters (int): The number of clusters to form.
+        file_path (str): The path of the document.
+        api_key (str): The API key for language processing services.
 
     Returns:
-        list: A list of indices representing the closest document chunk to each cluster center.
+        str: A custom prompt for summarization based on the document's language.
     """
-    try:
-        kmeans = KMeans(n_clusters=num_clusters, random_state=42, n_init=10).fit(vectors)
-        closest_indices = [np.argmin(np.linalg.norm(vectors - center, axis=1)) for center in kmeans.cluster_centers_]
-        return sorted(closest_indices)
-    except ValueError as e:
-        logging.error(f"Error during clustering embeddings: {e}")
-        raise
+    logging.info(f"Generating summary prompt for file: {file_path}")
+    text = file_handler.load_document(file_path)
+    if not text:
+        logging.warning("No text found in the document.")
+        return None
 
-def process_chunk(doc, llm3_turbo, map_prompt_template):
+    language = language_processing.detect_language(text)
+    if language == "nl":
+        return language_processing.translate_prompt(default_prompt_en, language)
+    else:
+        return default_prompt_en
+
+# Background Summarization Function
+
+def start_summarization_thread(root):
     """
-    Summarizes a single document chunk using a language model.
+    Starts the summarization process in a separate thread.
 
     Args:
-        doc (str): The document chunk to summarize.
-        llm3_turbo (ChatOpenAI): The language model for summarization.
-        map_prompt_template (PromptTemplate): The template for generating prompts.
-
-    Returns:
-        str: The summary of the document chunk.
+        root: The root window of the Tkinter application.
     """
-    try:
-        return load_summarize_chain(llm=llm3_turbo, chain_type="stuff", prompt=map_prompt_template).run([doc])
-    except Exception as e:
-        logging.error(f"Error summarizing document chunk: {e}")
-        return ""
+    logging.info("Starting summarization in a new thread.")
+    summarization_thread = threading.Thread(target=start_summarization, args=(root,))
+    summarization_thread.start()
 
-def generate_chunk_summaries(docs, selected_indices, openai_api_key, custom_prompt, max_workers=10):
+def start_summarization(root):
     """
-    Generates summaries for selected document chunks in parallel.
+    Handles the summarization process. Updates the progress bar and provides user feedback.
 
     Args:
-        docs (list): The list of document chunks.
-        selected_indices (list): The indices of chunks to summarize.
-        openai_api_key (str): The API key for OpenAI services.
-        custom_prompt (str): The custom prompt for summarization.
-        max_workers (int): The maximum number of threads to use.
-
-    Returns:
-        str: The combined summary of all selected document chunks.
+        root: The root window of the Tkinter application.
     """
-    llm3_turbo = ChatOpenAI(temperature=0, openai_api_key=openai_api_key, max_tokens=4096, model='gpt-3.5-turbo-16k')
-    map_prompt_template = PromptTemplate(template=f"```{{text}}```\n{custom_prompt}", input_variables=["text"])
-    summary_list = []
+    global selected_file_path, custom_prompt_area
+    api_key = get_api_key()
+    if api_key and selected_file_path:
+        try:
+            logging.info("Starting summarization process.")
+            custom_prompt_text = get_summary_prompt(selected_file_path, api_key)
+            update_progress_bar(10, root)
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_doc = {executor.submit(process_chunk, docs[i], llm3_turbo, map_prompt_template): i for i in selected_indices}
-        for future in as_completed(future_to_doc):
-            index = future_to_doc[future]
-            try:
-                chunk_summary = future.result()
-                summary_list.append(chunk_summary + "\n" if index < len(selected_indices) - 1 else chunk_summary)
-            except Exception as e:
-                logging.error(f"Error summarizing document chunk at index {index}: {e}")
+            text = file_handler.load_document(selected_file_path)
+            update_progress_bar(20, root)
 
-    return "".join(summary_list)
+            summary = summarization.generate_summary(
+                text, 
+                api_key, 
+                custom_prompt_text,
+                progress_update_callback=lambda value: update_progress_bar(value, root)
+            )
 
-def compile_summaries(summaries):
+            if summary:
+                filename_without_ext = os.path.splitext(os.path.basename(selected_file_path))[0]
+                root.after(0, lambda: save_summary_file(summary, filename_without_ext))
+                update_progress_bar(100, root)
+                logging.info("Summarization completed successfully.")
+            else:
+                logging.warning("Summarization resulted in no content.")
+                messagebox.showinfo("Summarization", "The summarization process did not generate any content.")
+
+        except Exception as e:
+            error_message = f"Error in summarization process: {e}"
+            logging.error(error_message)
+            messagebox.showerror("Summarization Error", error_message)
+            update_progress_bar(0, root)
+    else:
+        if not api_key:
+            logging.warning("API key is missing or invalid.")
+            messagebox.showinfo("API Key Missing", "API key is missing or invalid.")
+        if not selected_file_path:
+            logging.warning("No file selected for summarization.")
+            messagebox.showinfo("File Selection", "No file selected for summarization.")
+        update_progress_bar(0, root)
+
+def update_progress_bar(value, root):
     """
-    Compiles individual summaries into a final summary.
+    Updates the progress bar in the GUI.
 
     Args:
-        summaries (list): The list of individual summaries.
-
-    Returns:
-        str: The final compiled summary.
+        value (int): The progress value to set.
+        root: The root window of the Tkinter application.
     """
-    final_summary = "\n".join(summaries)
-    return final_summary
+    logging.debug(f"Updating progress bar to {value}%.")
+    def set_progress(value):
+        progress['value'] = value
+    root.after(0, lambda: set_progress(value))
 
-def generate_summary(text, api_key, custom_prompt, progress_update_callback=None):
+def save_summary_file(summary, filename_without_ext):
     """
-    Orchestrates the entire summarization process.
+    Opens a save file dialog and saves the summary to a file. Provides user feedback.
 
     Args:
-        text (str): The text to summarize.
-        api_key (str): The API key for OpenAI services.
-        custom_prompt (str): The custom prompt for summarization.
-        progress_update_callback (function): A callback function for progress updates.
-
-    Returns:
-        str: The final summary of the text.
+        summary (str): The summary text to save.
+        filename_without_ext (str): The base filename for the summary file.
     """
-    docs, vectors = split_and_embed_text(text, api_key)
-    if progress_update_callback:
-        progress_update_callback(40)
+    logging.info("Opening save file dialog for summary.")
+    default_summary_filename = f"{filename_without_ext}_sum"
+    file_path = filedialog.asksaveasfilename(
+        initialfile=default_summary_filename,
+        filetypes=[("Text Files", "*.txt"), ("Word Documents", "*.docx"), ("PDF Files", "*.pdf")],
+        defaultextension=".txt"
+    )
+    if file_path:
+        file_handler.save_summary(summary, file_path)
+        messagebox.showinfo("Success", f"Summary saved successfully to {file_path}")
+        logging.info(f"Summary saved to {file_path}")
+    else:
+        logging.warning("Summary saving cancelled by user.")
+        messagebox.showerror("Error", "No file path selected for saving the summary.")
 
-    num_clusters = determine_optimal_clusters(vectors)
-    if progress_update_callback:
-        progress_update_callback(50)
+# GUI Code Block
 
-    llm3_turbo = ChatOpenAI(temperature=0, openai_api_key=api_key, max_tokens=4096, model='gpt-3.5-turbo-16k')
-    map_prompt_template = PromptTemplate(template=f"```{{text}}```\n{custom_prompt}", input_variables=["text"])
+def main_gui():
+    """
+    Initializes and runs the main GUI for the Document Summarizer application.
 
-    summaries = []
-    for i, doc in enumerate(docs):
-        summary = process_chunk(doc, llm3_turbo, map_prompt_template)
-        summaries.append(summary)
-        if progress_update_callback:
-            progress_update_callback(50 + (40 * (i + 1) // len(docs)))
+    This function sets up the graphical user interface, including layout, styles, and event handling.
+    It allows users to select files for summarization, customize prompts, and initiate the summarization process.
+    """
+    global selected_file_path, progress, custom_prompt_area
 
-    final_summary = compile_summaries(summaries)
-    if progress_update_callback:
-        progress_update_callback(90)
+    logging.info("Initializing GUI for the Document Summarizer.")
+    root = tk.Tk()
+    root.title("Document Summarizer")
+    root.state('zoomed')  # Full-screen window
 
-    return final_summary
+    # Define colors, fonts, and styles for the GUI
+    primary_color = "#2E3F4F"
+    secondary_color = "#4F5D75"
+    text_color = "#E0FBFC"
+    button_color = "#3F88C5"
+    larger_font = ('Helvetica', 12)
+    button_font = ('Helvetica', 10, 'bold')
+
+    style = ttk.Style()
+    style.theme_use('clam')
+    style.configure('W.TButton', font=button_font, background=button_color, foreground=text_color)
+    style.map('W.TButton', background=[('active', secondary_color)], foreground=[('active', text_color)])
+
+    # Configure layout of the main window
+    root.configure(bg=primary_color)
+    root.grid_columnconfigure(0, weight=1)
+    root.grid_rowconfigure(1, weight=1)
+
+    # Progress bar to indicate summarization progress
+    progress = ttk.Progressbar(root, orient=tk.HORIZONTAL, length=300, mode='determinate')
+    progress.grid(row=0, column=0, pady=10, padx=10, sticky='ew')
+
+    # Customizable prompt box for user input
+    prompt_label = tk.Label(root, text="Customize the summarization prompt:", fg=text_color, bg=primary_color, font=larger_font)
+    prompt_label.grid(row=1, column=0, pady=(10, 0), sticky='nw')
+    custom_prompt_area = tk.Text(root, height=15, width=80, wrap="word", bd=2, font=larger_font)
+    custom_prompt_area.grid(row=2, column=0, pady=10, padx=10, sticky='nsew')
+
+    # Function for file selection
+    def file_select():
+        global selected_file_path
+        selected_file_path = select_file()
+        if selected_file_path:
+            api_key = get_api_key()
+            if api_key:
+                try:
+                    text = file_handler.load_document(selected_file_path)
+                    if text:
+                        language = language_processing.detect_language(text)
+                        custom_prompt = default_prompt_en  # Use the default English prompt
+                        if language == "nl":
+                            dutch_prompt = language_processing.translate_prompt(default_prompt_en, "nl")
+                            custom_prompt = dutch_prompt if dutch_prompt else default_prompt_en
+
+                        custom_prompt_area.delete("1.0", tk.END)
+                        custom_prompt_area.insert(tk.END, custom_prompt)
+                        progress['value'] = 0
+                        summarize_button['state'] = 'normal'
+                    else:
+                        messagebox.showerror("Error", "Failed to load document.")
+                        summarize_button['state'] = 'disabled'
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to load document: {e}")
+                    summarize_button['state'] = 'disabled'
+            else:
+                summarize_button['state'] = 'disabled'
+        else:
+            summarize_button['state'] = 'disabled'
+
+    # Select file button
+    select_button = ttk.Button(root, text="Select Document", command=file_select, style='W.TButton')
+    select_button.grid(row=3, column=0, pady=20, padx=10, sticky='ew')
+
+    # Start summarization button
+    summarize_button = ttk.Button(root, text="Start Summarization", style='W.TButton')
+    summarize_button['command'] = lambda: start_summarization_thread(root)
+    summarize_button.grid(row=4, column=0, pady=20, padx=10, sticky='ew')
+
+    root.mainloop()  # This line starts the Tkinter event loop
+
+if __name__ == '__main__':
+    logging.info("Starting the Document Summarizer application.")
+    main_gui()
