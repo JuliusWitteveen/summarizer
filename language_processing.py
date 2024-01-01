@@ -4,7 +4,16 @@ import logging
 
 def detect_language(text):
     """
-    Detect the language of the given text.
+    Detects the language of the given text.
+
+    Args:
+        text (str): The text for which to detect the language.
+
+    Returns:
+        str: The detected language code (e.g., 'en' for English). Returns 'unknown' if detection fails.
+
+    Notes:
+        Uses the 'langdetect' library for language detection.
     """
     try:
         return detect(text)
@@ -14,10 +23,20 @@ def detect_language(text):
 
 def translate_prompt(prompt_text, target_language):
     """
-    Translate the prompt text to the target language.
+    Translates the given prompt text to the specified target language.
+
+    Args:
+        prompt_text (str): The text to be translated.
+        target_language (str): The target language code (e.g., 'nl' for Dutch).
+
+    Returns:
+        str: The translated text. Returns the original text if translation fails or is not supported.
+
+    Notes:
+        Currently supports translation to Dutch ('nl') and English ('en') using the 'translate' library.
+        Logs a message if the target language is not supported.
     """
     if target_language not in ["nl", "en"]:
-        # Currently supports Dutch and English. Add more as needed.
         logging.info(f"Translation not supported for language: {target_language}")
         return prompt_text
 
